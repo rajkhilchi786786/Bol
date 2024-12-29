@@ -21,7 +21,7 @@ flooding_command = None
 DEFAULT_THREADS = 400
 Raj
 
-users = {}Raj
+users = {}
 keys = {}
 
 
