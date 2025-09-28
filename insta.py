@@ -49,9 +49,8 @@ class CloudwaysAutomator:
         """Performs Cloudways registration through their official website"""
         async with async_playwright() as p:
             try:
-                # Launch browser in HEADLESS mode for server compatibility
                 browser = await p.chromium.launch(
-                    headless=True,  # Changed from False to True
+                    headless=True,
                     args=[
                         "--no-sandbox",
                         "--disable-dev-shm-usage",
@@ -64,7 +63,6 @@ class CloudwaysAutomator:
                 logger.error(f"Browser launch failed: {e}")
                 return False, f"❌ Browser initialization failed: {str(e)}"
             
-            # Create fresh mobile context
             context = await browser.new_context(
                 user_agent=random.choice(self.mobile_user_agents),
                 locale="en-US",
@@ -74,64 +72,71 @@ class CloudwaysAutomator:
                 has_touch=True
             )
             await context.clear_cookies()
-            
             page = await context.new_page()
 
             try:
-                # Step 1: Load Cloudways registration page
-                await page.goto("https://platform.cloudways.com/signup", timeout=self.timeout)
-                await page.wait_for_load_state("networkidle")
-                await asyncio.sleep(random.uniform(2, 4))
+                # Step 1: Load Cloudways registration page with extended timeout
+                try:
+                    await page.goto("https://platform.cloudways.com/signup", timeout=180000)
+                    await page.wait_for_load_state("networkidle", timeout=180000)
+                    await asyncio.sleep(random.uniform(3, 5))
+                except Exception as e:
+                    if os.getenv('DEBUG', 'False').lower() == 'true':
+                        await page.screenshot(path="debug_load_failed.png")
+                    return False, f"❌ Page load failed or network slow: {e}"
 
-                # Debug: Save screenshot only if DEBUG environment variable is set
-                if os.getenv('DEBUG', 'False').lower() == 'true':
-                    await page.screenshot(path="debug1.png")
+                # Step 2: Fill form safely
+                try:
+                    await self._fill_field(page, 'input[name="first_name"], input[name="firstName"]', user_data['first_name'])
+                    await asyncio.sleep(random.uniform(1, 2))
+                    await self._fill_field(page, 'input[name="last_name"], input[name="lastName"]', user_data['last_name'])
+                    await asyncio.sleep(random.uniform(1, 2))
+                    await self._fill_field(page, 'input[name="email"], input[type="email"]', user_data['email'])
+                    await asyncio.sleep(random.uniform(1, 2))
+                    await self._fill_field(page, 'input[name="password"], input[type="password"]', user_data['password'])
+                    await asyncio.sleep(random.uniform(1, 2))
 
-                # Step 2: Fill registration form
-                await self._fill_field(page, 'input[name="first_name"], input[name="firstName"]', user_data['first_name'])
-                await self._fill_field(page, 'input[name="last_name"], input[name="lastName"]', user_data['last_name'])
-                await self._fill_field(page, 'input[name="email"], input[type="email"]', user_data['email'])
-                await self._fill_field(page, 'input[name="password"], input[type="password"]', user_data['password'])
-                await asyncio.sleep(random.uniform(1, 2))
+                    await self._select_dropdown(page, 'div[role="button"]:first-of-type, div[aria-haspopup="listbox"]:first-of-type', random.choice(self.business_types))
+                    await asyncio.sleep(random.uniform(1, 2))
+                    await self._select_dropdown(page, 'div[role="button"]:nth-of-type(2), div[aria-haspopup="listbox"]:nth-of-type(2)', random.choice(self.business_purposes))
+                    await asyncio.sleep(random.uniform(1, 2))
+                    await self._select_dropdown(page, 'div[role="button"]:nth-of-type(3), div[aria-haspopup="listbox"]:nth-of-type(3)', "$0 to $50")
+                    await asyncio.sleep(random.uniform(1, 3))
 
-                # Step 3: Select business information (updated selectors)
-                await self._select_dropdown(page, 'div[role="button"]:first-of-type, div[aria-haspopup="listbox"]:first-of-type', random.choice(self.business_types))
-                await asyncio.sleep(random.uniform(1, 2))
-                await self._select_dropdown(page, 'div[role="button"]:nth-of-type(2), div[aria-haspopup="listbox"]:nth-of-type(2)', random.choice(self.business_purposes))
-                await asyncio.sleep(random.uniform(1, 2))
-                await self._select_dropdown(page, 'div[role="button"]:nth-of-type(3), div[aria-haspopup="listbox"]:nth-of-type(3)', "$0 to $50")
-                await asyncio.sleep(random.uniform(1, 3))
+                except Exception as e:
+                    if os.getenv('DEBUG', 'False').lower() == 'true':
+                        await page.screenshot(path="debug_fill_failed.png")
+                    return False, f"❌ Form fill failed: {e}"
 
-                # Step 4: Accept terms and submit
-                await page.click('input[name="terms"], input[type="checkbox"]', delay=random.randint(100, 300))
-                await page.click('button[type="submit"], button:has-text("Sign Up")', delay=random.randint(200, 500))
+                # Step 3: Accept terms and submit
+                try:
+                    await page.click('input[name="terms"], input[type="checkbox"]', delay=random.randint(150, 400))
+                    await asyncio.sleep(random.uniform(0.5, 1.5))
+                    await page.click('button[type="submit"], button:has-text("Sign Up")', delay=random.randint(200, 500))
+                    await asyncio.sleep(random.uniform(3, 6))
+                except Exception as e:
+                    if os.getenv('DEBUG', 'False').lower() == 'true':
+                        await page.screenshot(path="debug_submit_failed.png")
+                    return False, f"❌ Submit failed: {e}"
 
-                # Debug: Save screenshot after submission only if DEBUG is set
-                if os.getenv('DEBUG', 'False').lower() == 'true':
-                    await page.screenshot(path="debug2.png")
-
-                # Step 5: Verify successful registration
+                # Step 4: Verify success
                 try:
                     await page.wait_for_selector(
                         'text=Your account has been created successfully, text=Verify your email',
-                        timeout=60000
+                        timeout=180000
                     )
                     return True, "✅ Account created successfully! Check your email for verification."
                 except Exception as e:
                     error = await self._get_error_message(page)
                     if os.getenv('DEBUG', 'False').lower() == 'true':
-                        await page.screenshot(path="error.png")
+                        await page.screenshot(path="error_after_submit.png")
                     return False, f"❌ Registration failed: {error or 'Unknown error'}"
 
-            except Exception as e:
-                logger.error(f"Registration error: {str(e)}", exc_info=True)
-                return False, f"⚠️ System error: {str(e)}"
             finally:
                 await context.close()
                 await browser.close()
 
     async def _fill_field(self, page, selectors, value):
-        """Human-like field filling with multiple selector options"""
         for selector in selectors.split(','):
             selector = selector.strip()
             if await page.query_selector(selector):
@@ -142,7 +147,6 @@ class CloudwaysAutomator:
         raise Exception(f"No matching field found for selectors: {selectors}")
 
     async def _select_dropdown(self, page, selectors, value):
-        """Mobile-like dropdown selection with multiple selector options"""
         for selector in selectors.split(','):
             selector = selector.strip()
             if await page.query_selector(selector):
@@ -154,7 +158,6 @@ class CloudwaysAutomator:
         raise Exception(f"No matching dropdown found for selectors: {selectors}")
 
     async def _get_error_message(self, page):
-        """Extracts error message if available"""
         for selector in ['.error-message', '.text-red-500', '[role="alert"]', '.alert-danger']:
             if element := await page.query_selector(selector):
                 return await element.inner_text()
@@ -241,15 +244,12 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 def main():
-    # Get Telegram token from environment variable
-    token = '8483930476:AAHoDKyxgQXCTbK0oPK1RDpZPBO0reevhZk'
+    token = '7643880906:AAEywMgFFXi98MrqwNNeImHbns7r8p6B3Bo'  # You can also use os.getenv('TELEGRAM_BOT_TOKEN')
     if not token:
         raise ValueError("Please set TELEGRAM_BOT_TOKEN environment variable")
     
-    # Create application
     application = Application.builder().token(token).build()
 
-    # Setup conversation handler
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('new', new)],
         states={
@@ -262,11 +262,9 @@ def main():
         allow_reentry=True
     )
 
-    # Add handlers
     application.add_handler(CommandHandler('start', start))
     application.add_handler(conv_handler)
     
-    # Start bot
     logger.info("Bot is running and ready for registrations...")
     application.run_polling()
 
